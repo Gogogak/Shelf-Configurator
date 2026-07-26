@@ -107,14 +107,15 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 2
     <span class="logo-tag">Shelf Builder</span>
   </div>
   <div class="view-toggle">
-    <button id="btn3d" class="active" onclick="showView('3d')">3D</button>
-    <button id="btn2d" onclick="showView('2d')">2D</button>
+    <button id="btn3d" onclick="showView('3d')">3D</button>
+    <button id="btn2d" class="active" onclick="showView('2d')">2D</button>
   </div>
 </header>
 <div class="workspace">
   <div id="viewer">
     <span class="viewer-hint">drag to orbit &middot; scroll to zoom</span>
     <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#FF6600"></div>Dead end</div>
       <div class="legend-item"><div class="legend-dot" style="background:#D4A800"></div>Critical</div>
       <div class="legend-item"><div class="legend-dot" style="background:#E06030"></div>Floating</div>
       <div class="legend-item"><div class="legend-dot" style="background:#D03020"></div>Clash</div>
@@ -157,9 +158,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 2
       <div id="envControls" style="display:none">
         <div class="ctrl"><label>Left height</label><input type="range" id="envLH" min="0" max="3000" step="10" value="1000"><span class="val" id="lblEnvLH">1000mm</span></div>
         <div class="ctrl"><label>Right height</label><input type="range" id="envRH" min="0" max="3000" step="10" value="2400"><span class="val" id="lblEnvRH">2400mm</span></div>
-        <div class="ctrl"><label>Left offset</label><input type="range" id="envLO" min="0" max="3000" step="10" value="500"><span class="val" id="lblEnvLO">500mm</span></div>
-        <div class="ctrl"><label>Slope width</label><input type="range" id="envSW" min="0" max="5000" step="10" value="2000"><span class="val" id="lblEnvSW">2000mm</span></div>
-        <div class="ctrl"><label>Right offset</label><input type="range" id="envRO" min="0" max="3000" step="10" value="800"><span class="val" id="lblEnvRO">800mm</span></div>
+        <div class="ctrl"><label>Left horiz.</label><input type="range" id="envLO" min="0" max="3000" step="10" value="500"><span class="val" id="lblEnvLO">500mm</span></div>
+        <div class="ctrl"><label>Slope length</label><input type="range" id="envSW" min="0" max="5000" step="10" value="2000"><span class="val" id="lblEnvSW">2000mm</span></div>
+        <div class="ctrl"><label>Right horiz.</label><input type="range" id="envRO" min="0" max="3000" step="10" value="800"><span class="val" id="lblEnvRO">800mm</span></div>
         <div class="ctrl"><label>Shelf offset</label><input type="range" id="envSO" min="0" max="3000" step="10" value="0"><span class="val" id="lblEnvSO">0mm</span></div>
       </div>
     </div>
@@ -287,6 +288,25 @@ function getBridgeSegs(){
   return bridges;
 }
 
+// ── NODE RULE ─────────────────────────────────────
+// Every node in the active structure must have at least 2 segments meeting it.
+function getDeadEndSegs(){
+  const{cols,rows}=state;
+  const deadEnds=new Set();
+  for(let r=0;r<=rows;r++){
+    for(let c=0;c<=cols;c++){
+      let count=0;
+      const incident=[];
+      if(c>0   &&!removedSegs.has(hKey(r,c-1))){count++;incident.push(hKey(r,c-1));}
+      if(c<cols&&!removedSegs.has(hKey(r,c)))  {count++;incident.push(hKey(r,c));}
+      if(r>0   &&!removedSegs.has(vKey(c,r-1))){count++;incident.push(vKey(c,r-1));}
+      if(r<rows&&!removedSegs.has(vKey(c,r)))  {count++;incident.push(vKey(c,r));}
+      if(count===1) incident.forEach(k=>deadEnds.add(k));
+    }
+  }
+  return deadEnds;
+}
+
 // ── PANEL LENGTHS (incl 30mm overhangs) ────────
 function getPanelLengths(){
   const{cols,rows}=state;
@@ -361,29 +381,23 @@ function getUnstableSegs(){
   const{cols,rows}=state;
   const unstable=new Set();
 
-  // Every row band: count active uprights — must be >=2
+  // Every row band r: horizontal cross-section hits vKey(c,r) for c=0..cols — must be >=2
+  // Only flag the uprights IN this band, not adjacent shelves
   for(let r=0;r<rows;r++){
     let count=0;
     for(let c=0;c<=cols;c++) if(!removedSegs.has(vKey(c,r))) count++;
     if(count<2){
       for(let c=0;c<=cols;c++) if(!removedSegs.has(vKey(c,r))) unstable.add(vKey(c,r));
-      for(let c=0;c<cols;c++){
-        if(!removedSegs.has(hKey(r,c)))   unstable.add(hKey(r,c));
-        if(!removedSegs.has(hKey(r+1,c))) unstable.add(hKey(r+1,c));
-      }
     }
   }
 
-  // Every col band: count active shelves — must be >=2
+  // Every col band c: vertical cross-section hits hKey(r,c) for r=0..rows — must be >=2
+  // Only flag the shelves IN this band, not adjacent uprights
   for(let c=0;c<cols;c++){
     let count=0;
     for(let r=0;r<=rows;r++) if(!removedSegs.has(hKey(r,c))) count++;
     if(count<2){
       for(let r=0;r<=rows;r++) if(!removedSegs.has(hKey(r,c))) unstable.add(hKey(r,c));
-      for(let r=0;r<rows;r++){
-        if(!removedSegs.has(vKey(c,r)))   unstable.add(vKey(c,r));
-        if(!removedSegs.has(vKey(c+1,r))) unstable.add(vKey(c+1,r));
-      }
     }
   }
   return unstable;
@@ -410,7 +424,7 @@ function checkOverturning(){
 }
 
 // ── WARNINGS ───────────────────────────────────
-function getWarnings(panelLengths,floatingSegs,clashSegs,bridgeSegs,unstableSegs){
+function getWarnings(panelLengths,floatingSegs,clashSegs,bridgeSegs,unstableSegs,deadEndSegs){
   const{cols,rows}=state;const _cw=cw(),_rh=rh();
   const w=[];
   if(_cw<MIN_SPACING)w.push(`Column bay ${Math.round(_cw)}mm < min ${MIN_SPACING}mm`);
@@ -427,7 +441,8 @@ function getWarnings(panelLengths,floatingSegs,clashSegs,bridgeSegs,unstableSegs
   const longSet=new Set();
   for(const[k,len]of panelLengths)if(len>MAX_PANEL)longSet.add(`Panel ${Math.round(len)}mm > ${MAX_PANEL}mm max — blue`);
   w.push(...longSet);
-  if(unstableSegs.size)w.push('Structure unstable: open frame (C/U shape) — purple');
+  if(deadEndSegs.size)w.push(`${deadEndSegs.size} segment(s) have a node with only 1 connection — orange`);
+  if(unstableSegs.size)w.push('Structure unstable: cross-section has fewer than 2 panels — purple');
   if(bridgeSegs.size)w.push(`${bridgeSegs.size} segment(s) would disconnect the frame if removed — yellow`);
   if(floatingSegs.size)w.push(`${floatingSegs.size} unsupported segment(s) — orange`);
   const ot=checkOverturning();if(ot)w.push(ot);
@@ -491,17 +506,21 @@ const matCant=new THREE.MeshLambertMaterial({color:0xD4A800,transparent:true,opa
 const matCantE=new THREE.MeshLambertMaterial({color:0xA07800,transparent:true,opacity:.90});
 const matUnstable=new THREE.MeshLambertMaterial({color:0x8030C0,transparent:true,opacity:.88});
 const matUnstableE=new THREE.MeshLambertMaterial({color:0x5010A0,transparent:true,opacity:.88});
+const matDead=new THREE.MeshLambertMaterial({color:0xFF6600,transparent:true,opacity:.90});
+const matDeadE=new THREE.MeshLambertMaterial({color:0xCC4400,transparent:true,opacity:.90});
 
+// Rounded shelf profile: rectangle with radius only on the 2 front vertical edges
+// Profile drawn in X-Z plane (width x depth), front = +z side
 function addPanel(g,x,y,z,w,h,d,mode){
-  const mf=mode==='clash'?matClash:mode==='float'?matFloat:mode==='long'?matLong:mode==='cant'?matCant:mode==='unstable'?matUnstable:matFace;
-  const me=mode==='clash'?matClashE:mode==='float'?matFloatE:mode==='long'?matLongE:mode==='cant'?matCantE:mode==='unstable'?matUnstableE:matEdge;
+  const mf=mode==='clash'?matClash:mode==='float'?matFloat:mode==='long'?matLong:mode==='cant'?matCant:mode==='unstable'?matUnstable:mode==='dead'?matDead:matFace;
+  const me=mode==='clash'?matClashE:mode==='float'?matFloatE:mode==='long'?matLongE:mode==='cant'?matCantE:mode==='unstable'?matUnstableE:mode==='dead'?matDeadE:matEdge;
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),[me,me,mf,mf,me,me]);
   m.castShadow=true;m.position.set(x,y,z);g.add(m);
 }
 
 let shelfGrp=null,envGrp=null;
 
-function buildShelf3D(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLengths){
+function buildShelf3D(floatingSegs,clashSegs,bridgeSegs,unstableSegs,deadEndSegs,panelLengths){
   if(shelfGrp)scene.remove(shelfGrp);
   shelfGrp=new THREE.Group();
   const{cols,rows}=state;
@@ -509,6 +528,7 @@ function buildShelf3D(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLength
     if(clashSegs.has(key))return'clash';
     if(floatingSegs.has(key))return'float';
     if(unstableSegs.has(key))return'unstable';
+    if(deadEndSegs.has(key))return'dead';
     if(bridgeSegs.has(key))return'cant';
     if((panelLengths.get(key)||0)>MAX_PANEL)return'long';
     return null;
@@ -533,10 +553,13 @@ function buildShelf3D(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLength
       const rem=(r<rows)&&removedSegs.has(vKey(c,r));
       if(!rem&&r<rows&&rs===null)rs=r;
       if((rem||r===rows)&&rs!==null){
-        const yTop=hDivY(rs)-PLY/2+OVERHANG;
-        // Uprights reaching the bottom rail extend to floor level (y = -OVERHANG)
+        // Upright extends OVERHANG past the face of each bounding shelf
+        // yTop: above the top face of the shelf above (hDivY(rs) + PLY/2 + OVERHANG)
+        const yTop=hDivY(rs)+PLY/2+OVERHANG;
+        // yBot: below the bottom face of the shelf below (hDivY(r) - PLY/2 - OVERHANG)
+        // For base uprights, extend to floor level (-OVERHANG)
         const atBase=(r===rows);
-        const yBot=atBase ? -OVERHANG : hDivY(r)+PLY/2-OVERHANG;
+        const yBot=atBase ? -OVERHANG : hDivY(r)-PLY/2-OVERHANG;
         const ph=yTop-yBot;
         if(ph>0)addPanel(shelfGrp,xc,yBot+ph/2,UPR_ZC,PLY,ph,DEPTH_UPRIGHT,mode(vKey(c,rs)));
         rs=rem?null:r;
@@ -553,31 +576,89 @@ function buildEnv3D(){
   const{leftH,rightH,leftOffset,slopeWidth,rightOffset,shelfOffset}=state.env;
   const totalW=leftOffset+slopeWidth+rightOffset;
   const floorY=-OVERHANG;
-  const pts=[[0,floorY],[totalW,floorY],[totalW,rightH],[leftOffset+slopeWidth,rightH],[leftOffset,leftH],[0,leftH],[0,floorY]];
+  const MARGIN=200;
+  const ENV_DEPTH=800;
+  const envZBack=-DEPTH_SHELF/2;
+  const envZFront=envZBack+ENV_DEPTH;
+  const boxLeft=-MARGIN;
+  const boxRight=totalW+MARGIN;
+  const maxSoffitH=Math.max(leftH,rightH);
+  const boxTop=maxSoffitH+MARGIN;
   const ox=-state.W/2-shelfOffset;
-  function face(z){
-    const sh=new THREE.Shape();
-    pts.forEach(([x,y],i)=>i===0?sh.moveTo(x,y):sh.lineTo(x,y));
-    sh.closePath();
-    const m=new THREE.Mesh(new THREE.ShapeGeometry(sh),new THREE.MeshBasicMaterial({color:0x4468BB,transparent:true,opacity:.10,side:THREE.DoubleSide,depthWrite:false}));
+
+  const envMat=new THREE.MeshBasicMaterial({color:0x4468BB,transparent:true,opacity:0.07,side:THREE.DoubleSide,depthWrite:false});
+  const lmat=new THREE.LineBasicMaterial({color:0x2244AA,transparent:true,opacity:0.4});
+
+  function addFace(shape,z){
+    const m=new THREE.Mesh(new THREE.ShapeGeometry(shape),envMat);
     m.position.set(ox,0,z);envGrp.add(m);
   }
-  // Envelope: 800mm deep, flush at back of shelf (z = -DEPTH_SHELF/2)
-  const ENV_DEPTH=800;
-  const envZBack=-DEPTH_SHELF/2;        // flush with shelf back
-  const envZFront=envZBack+ENV_DEPTH;   // 800mm forward
-  face(envZBack);face(envZFront);
-  const lmat=new THREE.LineBasicMaterial({color:0x2244AA,transparent:true,opacity:.5});
-  function outline(z){
-    const vv=[];for(let i=0;i<pts.length-1;i++)vv.push(pts[i][0],pts[i][1],z,pts[i+1][0],pts[i+1][1],z);
+  function addLine(pts2d,z){
+    const vv=[];
+    for(let i=0;i<pts2d.length-1;i++) vv.push(pts2d[i][0],pts2d[i][1],z,pts2d[i+1][0],pts2d[i+1][1],z);
     const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(vv,3));
     const l=new THREE.LineSegments(g,lmat);l.position.set(ox,0,0);envGrp.add(l);
   }
-  outline(envZBack);outline(envZFront);
-  for(const[px,py]of pts.slice(0,-1)){
-    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute([px,py,envZBack,px,py,envZFront],3));
-    const l=new THREE.LineSegments(g,lmat);l.position.set(ox,0,0);envGrp.add(l);
+  function addVertLines(pts2d){
+    for(const[px,py] of pts2d){
+      const g=new THREE.BufferGeometry();
+      g.setAttribute('position',new THREE.Float32BufferAttribute([px,py,envZBack,px,py,envZFront],3));
+      const l=new THREE.LineSegments(g,lmat);l.position.set(ox,0,0);envGrp.add(l);
+    }
   }
+
+  // Ceiling panel
+  const ceilShape=new THREE.Shape();
+  ceilShape.moveTo(boxLeft,maxSoffitH);ceilShape.lineTo(boxRight,maxSoffitH);
+  ceilShape.lineTo(boxRight,boxTop);ceilShape.lineTo(boxLeft,boxTop);ceilShape.closePath();
+
+  // Left margin wall
+  const leftShape=new THREE.Shape();
+  leftShape.moveTo(boxLeft,floorY);leftShape.lineTo(0,floorY);
+  leftShape.lineTo(0,leftH);leftShape.lineTo(boxLeft,leftH);leftShape.closePath();
+
+  // Right margin wall
+  const rightShape=new THREE.Shape();
+  rightShape.moveTo(totalW,floorY);rightShape.lineTo(boxRight,floorY);
+  rightShape.lineTo(boxRight,rightH);rightShape.lineTo(totalW,rightH);rightShape.closePath();
+
+  // Above-soffit fill
+  const aboveShape=new THREE.Shape();
+  aboveShape.moveTo(0,leftH);
+  aboveShape.lineTo(leftOffset,leftH);
+  aboveShape.lineTo(leftOffset+slopeWidth,rightH);
+  aboveShape.lineTo(totalW,rightH);
+  aboveShape.lineTo(totalW,boxTop);
+  aboveShape.lineTo(0,boxTop);
+  aboveShape.closePath();
+
+  [envZBack,envZFront].forEach(z=>{
+    addFace(ceilShape,z);
+    addFace(leftShape,z);
+    addFace(rightShape,z);
+    addFace(aboveShape,z);
+  });
+
+  // Soffit profile line
+  const soffitLine=[[0,leftH],[leftOffset,leftH],[leftOffset+slopeWidth,rightH],[totalW,rightH]];
+  // Outer box outline
+  const boxOutline=[[boxLeft,floorY],[boxLeft,boxTop],[boxRight,boxTop],[boxRight,floorY],[boxLeft,floorY]];
+  [envZBack,envZFront].forEach(z=>{
+    addLine(soffitLine,z);
+    addLine(boxOutline,z);
+    addLine([[0,floorY],[0,leftH]],z);
+    addLine([[totalW,floorY],[totalW,rightH]],z);
+  });
+
+  // Vertical connecting lines
+  addVertLines([
+    [boxLeft,floorY],[boxLeft,leftH],[boxLeft,boxTop],
+    [0,floorY],[0,leftH],
+    [leftOffset,leftH],[leftOffset+slopeWidth,rightH],
+    [totalW,floorY],[totalW,rightH],
+    [boxRight,floorY],[boxRight,rightH],[boxRight,boxTop]
+  ]);
+
   scene.add(envGrp);
 }
 
@@ -622,23 +703,29 @@ renderer.domElement.addEventListener('touchmove',e=>{
 // appears. Pinch adjusts gcZoom. Size changes refit the zoom automatically.
 const gc=document.getElementById('gridCanvas');
 const gctx=gc.getContext('2d');
-const HIT=10; // px hit radius — large enough for mouse on thin lines
-const PAD=20;          // fixed padding in canvas pixels
-let gcZoom=0.15;       // px per mm — recalculated by fitZoom()
+const HIT=10;
+const PAD=70; // generous padding for dimension annotations
+let gcZoom=0.15;
 let gcPinchDist=null;
+let gcFitTimer=null; // debounce timer for auto zoom-to-fit
 
-// Set canvas pixel size once from layout, never changes again
 function initCanvas(){
   const w=gc.offsetWidth||262;
   gc.width=w;
-  gc.height=w; // square viewport — shelf centred inside
+  gc.height=w;
 }
 
-// Recalculate zoom so the shelf fits inside the canvas with PAD on all sides
+// Fit zoom so shelf fills canvas minus PAD on all sides
 function fitZoom(){
-  const avW=gc.width -PAD*2;
+  const avW=gc.width-PAD*2;
   const avH=gc.height-PAD*2;
   gcZoom=Math.min(avW/state.W, avH/state.H);
+}
+
+// Schedule a zoom-to-fit 500ms after last call (used by sliders)
+function scheduleFit(){
+  if(gcFitTimer) clearTimeout(gcFitTimer);
+  gcFitTimer=setTimeout(()=>{ fitZoom(); render(); }, 500);
 }
 
 // Convert canvas pixel coords → mm coords relative to shelf origin (top-left)
@@ -662,11 +749,10 @@ function vxMm(c){ return c*(cw()+PLY); }
 function hyMm(r){ return r*(rh()+PLY); }
 
 function syncCanvas(){
-  // Canvas size is fixed — only refit zoom when called
-  fitZoom();
+  // Canvas size fixed — zoom managed independently, don't refit here
 }
 
-function drawGrid(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLengths){
+function drawGrid(floatingSegs,clashSegs,bridgeSegs,unstableSegs,deadEndSegs,panelLengths){
   const{cols,rows}=state;
   const _cw=cw(),_rh=rh();
   const plyPx=PLY*gcZoom;
@@ -688,29 +774,40 @@ function drawGrid(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLengths){
     }
   }
 
-  // Envelope overlay
+  // Envelope overlay — soffit line only, in shelf coordinate space
+  // X=0 = left edge of shelf. Envelope left boundary = -(shelfOffset).
   if(state.env.active){
     const{leftH,rightH,leftOffset,slopeWidth,rightOffset,shelfOffset}=state.env;
-    // env x is relative to shelf left + shelfOffset
-    const ex=xmm=>{ const[px]=mmToCanvas(xmm-shelfOffset,0); return px; };
-    const ey=ymm=>{ const[,py]=mmToCanvas(0,state.H-ymm); return py; };
+    // Convert envelope mm coords to canvas pixels
+    // Envelope x is measured from envelope left = shelf x 0 - shelfOffset
+    // So envelope x=0 → shelf mm x = -shelfOffset
+    const ex=xEnv=>{ const[px]=mmToCanvas(-shelfOffset+xEnv, 0); return px; };
+    // y: envelope heights measured from floor (y=0 in shelf coords = top, y=H = bottom)
+    // envHeight=0 is floor, envHeight=H is top of shelf
+    const ey=yMm=>{ const[,py]=mmToCanvas(0, state.H-yMm); return py; };
+
+    // Floor level y pixel
+    const floorPy=ey(-OVERHANG);
+
     gctx.save();
-    const[cx0]=mmToCanvas(0,0);const[cx1]=mmToCanvas(state.W,0);
-    const cy0=mmToCanvas(0,0)[1];
+    gctx.strokeStyle='rgba(50,80,180,0.7)';
+    gctx.lineWidth=1.5;
+    gctx.setLineDash([5,3]);
     gctx.beginPath();
-    gctx.moveTo(cx0,cy0);gctx.lineTo(cx1,cy0);
-    gctx.lineTo(cx1,ey(rightH));
-    gctx.lineTo(ex(leftOffset+slopeWidth),ey(rightH));
-    gctx.lineTo(ex(leftOffset),ey(leftH));
-    gctx.lineTo(cx0,ey(leftH));
-    gctx.closePath();
-    gctx.fillStyle='rgba(50,80,180,0.08)';gctx.fill();
-    gctx.beginPath();
-    gctx.moveTo(cx0,ey(leftH));
-    gctx.lineTo(ex(leftOffset),ey(leftH));
-    gctx.lineTo(ex(leftOffset+slopeWidth),ey(rightH));
-    gctx.lineTo(cx1,ey(rightH));
-    gctx.strokeStyle='rgba(50,80,180,0.55)';gctx.lineWidth=1.5;gctx.setLineDash([5,3]);gctx.stroke();gctx.setLineDash([]);
+    // Trace the soffit profile:
+    // 1. Vertical up left boundary from floor
+    gctx.moveTo(ex(0), floorPy);
+    gctx.lineTo(ex(0), ey(leftH));
+    // 2. Horizontal right at leftH for left horizontal length
+    gctx.lineTo(ex(leftOffset), ey(leftH));
+    // 3. Slope up to rightH across slope length
+    gctx.lineTo(ex(leftOffset+slopeWidth), ey(rightH));
+    // 4. Horizontal right at rightH for right horizontal length
+    gctx.lineTo(ex(leftOffset+slopeWidth+rightOffset), ey(rightH));
+    // 5. Vertical down right boundary to floor
+    gctx.lineTo(ex(leftOffset+slopeWidth+rightOffset), floorPy);
+    gctx.stroke();
+    gctx.setLineDash([]);
     gctx.restore();
   }
 
@@ -718,6 +815,7 @@ function drawGrid(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLengths){
     if(clashSegs.has(key))return'#C03020';
     if(floatingSegs.has(key))return'#D05020';
     if(unstableSegs.has(key))return'#8030C0';
+    if(deadEndSegs.has(key))return'#FF6600';
     if(bridgeSegs.has(key))return'#B88000';
     if((panelLengths.get(key)||0)>MAX_PANEL)return'#2050B0';
     return'#8A6030';
@@ -738,29 +836,114 @@ function drawGrid(floatingSegs,clashSegs,bridgeSegs,unstableSegs,panelLengths){
     gctx.stroke();gctx.setLineDash([]);
   }
 
-  // Horizontal dividers (shelves & rails) r=0..rows
+  // Horizontal segments: node centre to node centre
   for(let r=0;r<=rows;r++){
-    const yMm=hyMm(r)+PLY/2;
+    const yMm=hyMm(r)+PLY/2;           // node centre y
     for(let c=0;c<cols;c++){
-      const x1Mm=vxMm(c);
-      const x2Mm=vxMm(c)+PLY+_cw;
+      const x1Mm=vxMm(c)+PLY/2;        // node centre c
+      const x2Mm=vxMm(c+1)+PLY/2;      // node centre c+1
       const[px1,py1]=mmToCanvas(x1Mm,yMm);
       const[px2   ]=mmToCanvas(x2Mm,yMm);
       drawSeg(px1,py1,px2,py1,hKey(r,c));
     }
   }
 
-  // Vertical dividers (uprights & walls) c=0..cols
+  // Vertical segments: node centre to node centre
   for(let c=0;c<=cols;c++){
-    const xMm=vxMm(c)+PLY/2;
+    const xMm=vxMm(c)+PLY/2;           // node centre x
     for(let r=0;r<rows;r++){
-      const y1Mm=hyMm(r);
-      const y2Mm=hyMm(r)+PLY+_rh;
+      const y1Mm=hyMm(r)+PLY/2;        // node centre r
+      const y2Mm=hyMm(r+1)+PLY/2;      // node centre r+1
       const[px1,py1]=mmToCanvas(xMm,y1Mm);
       const[    ,py2]=mmToCanvas(xMm,y2Mm);
       drawSeg(px1,py1,px1,py2,vKey(c,r));
     }
   }
+
+  // ── DIMENSION ANNOTATIONS ──
+  const dimCol='#6A5040';
+  const TIER=22; // px between dimension tiers
+  const TICK=5;  // px tick mark half-length
+
+  function drawDim(x1,y1,x2,y2,label,offset,axis){
+    // axis: 'h'=horizontal dim, 'v'=vertical dim
+    // offset: how far below (h) or to the right (v) in px
+    gctx.save();
+    gctx.strokeStyle=dimCol;
+    gctx.fillStyle=dimCol;
+    gctx.lineWidth=1;
+    gctx.font=`${Math.max(9,Math.round(gcZoom*18))}px sans-serif`;
+    gctx.textAlign='center';
+    gctx.textBaseline='middle';
+
+    if(axis==='h'){
+      const y=y1+offset;
+      // Extension lines
+      gctx.beginPath();gctx.moveTo(x1,y1+2);gctx.lineTo(x1,y+TICK);gctx.stroke();
+      gctx.beginPath();gctx.moveTo(x2,y2+2);gctx.lineTo(x2,y+TICK);gctx.stroke();
+      // Dimension line with arrows
+      gctx.beginPath();gctx.moveTo(x1,y);gctx.lineTo(x2,y);gctx.stroke();
+      // Arrow ticks
+      gctx.beginPath();gctx.moveTo(x1,y-TICK);gctx.lineTo(x1,y+TICK);gctx.stroke();
+      gctx.beginPath();gctx.moveTo(x2,y-TICK);gctx.lineTo(x2,y+TICK);gctx.stroke();
+      // Label
+      const cx=(x1+x2)/2;
+      gctx.fillStyle='#E8E0D0';
+      const tw=gctx.measureText(label).width+6;
+      gctx.fillRect(cx-tw/2,y-7,tw,14);
+      gctx.fillStyle=dimCol;
+      gctx.fillText(label,cx,y);
+    } else {
+      const x=x2+offset;
+      // Extension lines
+      gctx.beginPath();gctx.moveTo(x2+2,y1);gctx.lineTo(x+TICK,y1);gctx.stroke();
+      gctx.beginPath();gctx.moveTo(x1+2,y2);gctx.lineTo(x+TICK,y2);gctx.stroke();
+      // Dimension line
+      gctx.beginPath();gctx.moveTo(x,y1);gctx.lineTo(x,y2);gctx.stroke();
+      // Arrow ticks
+      gctx.beginPath();gctx.moveTo(x-TICK,y1);gctx.lineTo(x+TICK,y1);gctx.stroke();
+      gctx.beginPath();gctx.moveTo(x-TICK,y2);gctx.lineTo(x+TICK,y2);gctx.stroke();
+      // Label — rotated
+      const cy=(y1+y2)/2;
+      gctx.save();
+      gctx.translate(x+14,cy);
+      gctx.rotate(-Math.PI/2);
+      gctx.fillStyle='#E8E0D0';
+      const tw=gctx.measureText(label).width+6;
+      gctx.fillRect(-tw/2,-7,tw,14);
+      gctx.fillStyle=dimCol;
+      gctx.fillText(label,0,0);
+      gctx.restore();
+    }
+    gctx.restore();
+  }
+
+  // Shelf corners in canvas pixels
+  const[shelfL,shelfT]=mmToCanvas(0,0);
+  const[shelfR,shelfB]=mmToCanvas(state.W,state.H);
+
+  // --- Below shelf ---
+  // Tier 1: one column width (leftmost bay, inner faces)
+  const colW_mm=Math.round(cw());
+  const[colL]=mmToCanvas(vxMm(0)+PLY/2+PLY/2,0); // left face of bay 0 = vxMm(0)+PLY
+  const[colR]=mmToCanvas(vxMm(1)+PLY/2-PLY/2,0); // right face of bay 0 = vxMm(1)
+  // Actually use node centres for consistency:
+  const[nc0x]=mmToCanvas(vxMm(0)+PLY/2,0);
+  const[nc1x]=mmToCanvas(vxMm(1)+PLY/2,0);
+  drawDim(nc0x,shelfB,nc1x,shelfB,`${colW_mm}`,TIER,'h');
+
+  // Tier 2: overall width
+  drawDim(shelfL,shelfB,shelfR,shelfB,`${state.W}mm`,TIER*2,'h');
+
+  // --- Right of shelf ---
+  // Tier 1 (inner): one row height (topmost bay)
+  const rowH_mm=Math.round(rh());
+  const[,nr0y]=mmToCanvas(0,hyMm(0)+PLY/2);
+  const[,nr1y]=mmToCanvas(0,hyMm(1)+PLY/2);
+  drawDim(shelfR,nr0y,shelfR,nr1y,`${rowH_mm}`,TIER,'v');
+
+  // Tier 2 (outer): overall height
+  drawDim(shelfR,shelfT,shelfR,shelfB,`${state.H}mm`,TIER*2,'v');
 }
 
 function hitTest(mx,my){
@@ -771,21 +954,21 @@ function hitTest(mx,my){
   const rhPx=_rh*gcZoom;
   const hitR=Math.max(HIT, plyPx*0.5); // HIT=12px minimum is generous for mouse
 
-  // Horizontal dividers
+  // Horizontal segments: node centre to node centre
   for(let r=0;r<=rows;r++){
     const yMm=hyMm(r)+PLY/2;
     for(let c=0;c<cols;c++){
-      const x1Mm=vxMm(c), x2Mm=vxMm(c)+PLY+_cw;
+      const x1Mm=vxMm(c)+PLY/2, x2Mm=vxMm(c+1)+PLY/2;
       const[px1,py]=mmToCanvas(x1Mm,yMm);
       const[px2  ]=mmToCanvas(x2Mm,yMm);
       if(mx>=px1&&mx<=px2&&Math.abs(my-py)<hitR)return hKey(r,c);
     }
   }
-  // Vertical dividers
+  // Vertical segments: node centre to node centre
   for(let c=0;c<=cols;c++){
     const xMm=vxMm(c)+PLY/2;
     for(let r=0;r<rows;r++){
-      const y1Mm=hyMm(r), y2Mm=hyMm(r)+PLY+_rh;
+      const y1Mm=hyMm(r)+PLY/2, y2Mm=hyMm(r+1)+PLY/2;
       const[px,py1]=mmToCanvas(xMm,y1Mm);
       const[  ,py2]=mmToCanvas(xMm,y2Mm);
       if(Math.abs(mx-px)<hitR&&my>=py1&&my<=py2)return vKey(c,r);
@@ -858,13 +1041,12 @@ function bindSlider(id,lbl,key,suffix){
   document.getElementById(id).addEventListener('input',e=>{
     state[key]=+e.target.value;
     document.getElementById(lbl).textContent=state[key]+(suffix||'');
-    // Prune removed segments outside new grid bounds
     for(const k of [...removedSegs]){
       const p=k.split(':'),t=p[0],a=+p[1],b=+p[2];
       if(t==='h'&&(a>state.rows||b>=state.cols))removedSegs.delete(k);
       if(t==='v'&&(b>=state.rows||a>state.cols))removedSegs.delete(k);
     }
-    if(isSizeKey)frameCam();
+    if(isSizeKey){ frameCam(); scheduleFit(); }
     render();
   });
 }
@@ -895,13 +1077,14 @@ function render(){
   const clash=getClashSegs();
   const bridges=getBridgeSegs();
   const unstable=getUnstableSegs();
+  const deadEnds=getDeadEndSegs();
   const lengths=getPanelLengths();
-  buildShelf3D(floating,clash,bridges,unstable,lengths);
+  buildShelf3D(floating,clash,bridges,unstable,deadEnds,lengths);
   buildFloor();
   buildEnv3D();
   syncCanvas();
-  drawGrid(floating,clash,bridges,unstable,lengths);
-  const warns=getWarnings(lengths,floating,clash,bridges,unstable);
+  drawGrid(floating,clash,bridges,unstable,deadEnds,lengths);
+  const warns=getWarnings(lengths,floating,clash,bridges,unstable,deadEnds);
   document.getElementById('warns').innerHTML=warns.map(t=>`<div class="warn">⚠ ${t}</div>`).join('');
   document.getElementById('btnOrder').disabled=warns.length>0;
   document.getElementById('dimW').textContent=state.W;
@@ -915,7 +1098,7 @@ function onResize(){
 }
 window.addEventListener('resize',()=>{onResize();initCanvas();fitZoom();render();});
 function loop(){requestAnimationFrame(loop);renderer.render(scene,camera);}
-onResize();initCanvas();frameCam();render();loop();
+onResize();initCanvas();frameCam();showView('2d');render();loop();
 
 </script>
 </body>
